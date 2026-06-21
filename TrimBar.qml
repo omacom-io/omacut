@@ -1,7 +1,7 @@
 import QtQuick
 
-// An iPhone-style trim bar: a thumbnail filmstrip with two draggable handles
-// and a scrubbable playhead. All times are in seconds.
+// A thumbnail filmstrip with two draggable handles and a scrubbable playhead.
+// All times are in seconds.
 Item {
     id: root
     implicitHeight: 76

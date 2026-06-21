@@ -1,6 +1,6 @@
 # omacut
 
-A dead-simple video **length** trimmer — like the iPhone Photos clip editor.
+A dead-simple video **length** trimmer.
 Open a video, drag the two yellow handles to pick a start and end, preview the
 clip, and export. **Qt Quick (QML)** UI with the Material style — the same Qt
 stack Quickshell builds on — and **ffmpeg** for the cut. The C++ side compiles
