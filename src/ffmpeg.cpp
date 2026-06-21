@@ -94,15 +94,23 @@ QImage thumbnail(const QString &path, double time, int height) {
     return img;
 }
 
-QStringList trimArgs(const QString &src, const QString &dst, double start, double end) {
+QStringList trimArgs(const QString &src, const QString &dst, double start, double end, bool lossless) {
     QStringList args = {"-y", "-loglevel", "error"};
     // -ss before -i seeks fast; -t gives the output duration.
     args << "-ss" << QString::number(start, 'f', 3)
          << "-i" << src
-         << "-t" << QString::number(qMax(end - start, 0.0), 'f', 3)
-         << "-c:v" << "libx264" << "-preset" << "veryfast"
-         << "-crf" << "18" << "-c:a" << "aac"
-         << dst;
+         << "-t" << QString::number(qMax(end - start, 0.0), 'f', 3);
+    
+    if (lossless) {
+        // Stream copy: no re-encoding, fastest but may not be frame-accurate
+        args << "-c" << "copy";
+    } else {
+        // Re-encode with libx264/aac for frame-accuracy
+        args << "-c:v" << "libx264" << "-preset" << "veryfast"
+             << "-crf" << "18" << "-c:a" << "aac";
+    }
+    
+    args << dst;
     return args;
 }
 
