@@ -44,18 +44,7 @@ This produces a single `omacut` binary in `build/`.
 - Drag the **left/right yellow handles** to set the start and end.
 - Click inside the strip or drag the white playhead to **scrub**.
 - **Play / Space** previews just the selected clip (auto-stops at the end).
-- **Export…** writes the trimmed video next to the original.
-
-### Lossless vs. precise — chosen automatically
-
-A stream copy is instant and lossless but can only *start* on a keyframe. So
-omacut probes the video's keyframes and picks the cut method based on where your
-start handle sits, shown live next to the Export button:
-
-- **Lossless · instant** — your start is on a keyframe (or you didn't trim the
-  start). ffmpeg copies the streams (`-c copy`); no quality loss, near-instant.
-- **Precise · re-encodes** — your start falls between keyframes, so omacut
-  re-encodes (libx264 / aac) to cut at the exact frame you chose.
+- **Export…** writes a frame-accurate trimmed video next to the original.
 
 ## Source layout
 
@@ -64,10 +53,9 @@ start handle sits, shown live next to the Export button:
 | `Main.qml`        | The window: video preview, controls, file dialogs. |
 | `TrimBar.qml`     | The filmstrip + draggable trim handles (custom QML). |
 | `main.cpp`        | Entry point: sets the Material style, wires QML ↔ C++. |
-| `backend.*`       | QObject exposed to QML: load, thumbnails, keyframes, export. |
+| `backend.*`       | QObject exposed to QML: load, thumbnails, export. |
 | `thumbprovider.*` | Serves filmstrip thumbnails to QML `Image` elements. |
 | `thumbworker.*`   | Background thread that builds the filmstrip thumbnails. |
-| `keyframeworker.*`| Background thread that probes keyframe timestamps. |
 | `ffmpeg.*`        | ffprobe/ffmpeg wrappers (probe, thumbnail, trim). |
 | `resources.qrc`   | Embeds the QML into the binary. |
 | `omacut.pro`      | qmake project file. |

@@ -1,7 +1,5 @@
 #include "ffmpeg.h"
 
-#include <algorithm>
-
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -81,46 +79,6 @@ VideoInfo probe(const QString &path) {
     return info;
 }
 
-QVector<double> keyframeTimes(const QString &path) {
-    QVector<double> times;
-    const QString ffprobe = toolPath("ffprobe");
-    if (ffprobe.isEmpty())
-        return times;
-
-    // Read packet timestamps + flags without decoding; 'K' marks a keyframe.
-    QProcess proc;
-    proc.start(ffprobe, {
-        "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "packet=pts_time,flags",
-        "-of", "csv=p=0",
-        path,
-    });
-    proc.waitForFinished(-1);
-    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0)
-        return times;
-
-    const QByteArray out = proc.readAllStandardOutput();
-    for (const QByteArray &line : out.split('\n')) {
-        const QByteArray trimmed = line.trimmed();
-        if (trimmed.isEmpty())
-            continue;
-        const int comma = trimmed.indexOf(',');
-        if (comma <= 0)
-            continue;
-        const QByteArray timeStr = trimmed.left(comma);
-        const QByteArray flags = trimmed.mid(comma + 1);
-        if (!flags.contains('K'))
-            continue;
-        bool okNum = false;
-        const double t = timeStr.toDouble(&okNum);
-        if (okNum)
-            times.append(t);
-    }
-    std::sort(times.begin(), times.end());
-    return times;
-}
-
 QImage thumbnail(const QString &path, double time, int height) {
     const QString ffmpeg = toolPath("ffmpeg");
     if (ffmpeg.isEmpty())
@@ -148,20 +106,15 @@ QImage thumbnail(const QString &path, double time, int height) {
     return img;
 }
 
-QStringList trimArgs(const QString &src, const QString &dst,
-                     double start, double end, bool reencode) {
+QStringList trimArgs(const QString &src, const QString &dst, double start, double end) {
     QStringList args = {"-y", "-loglevel", "error"};
-    // -ss before -i seeks fast; -t gives the duration to copy.
+    // -ss before -i seeks fast; -t gives the output duration.
     args << "-ss" << QString::number(start, 'f', 3)
          << "-i" << src
-         << "-t" << QString::number(qMax(end - start, 0.0), 'f', 3);
-    if (reencode) {
-        args << "-c:v" << "libx264" << "-preset" << "veryfast"
-             << "-crf" << "18" << "-c:a" << "aac";
-    } else {
-        args << "-c" << "copy";
-    }
-    args << dst;
+         << "-t" << QString::number(qMax(end - start, 0.0), 'f', 3)
+         << "-c:v" << "libx264" << "-preset" << "veryfast"
+         << "-crf" << "18" << "-c:a" << "aac"
+         << dst;
     return args;
 }
 

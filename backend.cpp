@@ -1,12 +1,11 @@
 #include "backend.h"
 
-#include <algorithm>
-
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
 
-#include "keyframeworker.h"
+#include "filepicker.h"
+#include "portalfilepicker.h"
 #include "thumbprovider.h"
 #include "thumbworker.h"
 
@@ -15,7 +14,20 @@ constexpr int kThumbCount = 12;
 }
 
 Backend::Backend(ThumbProvider *provider, QObject *parent)
-    : QObject(parent), m_provider(provider) {}
+    : Backend(provider, new PortalFilePicker(), parent) {}
+
+Backend::Backend(ThumbProvider *provider, FilePicker *filePicker, QObject *parent)
+    : QObject(parent), m_provider(provider), m_filePicker(filePicker) {
+    if (!m_filePicker->parent())
+        m_filePicker->setParent(this);
+    wireFilePicker();
+}
+
+void Backend::wireFilePicker() {
+    connect(m_filePicker, &FilePicker::openSelected, this, &Backend::load);
+    connect(m_filePicker, &FilePicker::exportSelected, this, &Backend::exportClip);
+    connect(m_filePicker, &FilePicker::failed, this, &Backend::loadError);
+}
 
 void Backend::setBusy(bool busy) {
     if (m_busy == busy)
@@ -49,19 +61,22 @@ bool Backend::load(const QUrl &url) {
     m_provider->setImages({});
     emit thumbsChanged();
 
-    // Reset keyframe analysis; default to "needs re-encode" until it arrives.
-    m_keyframes.clear();
-    ++m_analysisRevision;
-    emit analysisChanged();
-
     emit infoChanged();
 
-    setStatus(QString("%1×%2 · generating thumbnails…")
-                  .arg(info.width)
-                  .arg(info.height));
+    setStatus(QStringLiteral("Loading..."));
     startThumbs();
-    startKeyframes();
     return true;
+}
+
+void Backend::openVideoDialog() {
+    m_filePicker->openVideo();
+}
+
+void Backend::exportDialog(double start, double end) {
+    if (m_path.isEmpty() || !m_info.ok)
+        return;
+
+    m_filePicker->exportVideo(suggestedExportUrl(), start, end);
 }
 
 void Backend::startThumbs() {
@@ -80,45 +95,6 @@ void Backend::startThumbs() {
             worker->deleteLater();
     });
     worker->start();
-}
-
-void Backend::startKeyframes() {
-    auto *worker = new KeyframeWorker(m_path, this);
-    connect(worker, &KeyframeWorker::ready, this, [this, worker](const QVector<double> &times) {
-        m_keyframes = times;
-        ++m_analysisRevision;
-        emit analysisChanged();
-        worker->deleteLater();
-    });
-    connect(worker, &KeyframeWorker::finished, worker, [worker] {
-        if (worker->parent())
-            worker->deleteLater();
-    });
-    worker->start();
-}
-
-double Backend::alignEpsilon() const {
-    // Treat the start as "on a keyframe" if within half a frame of one.
-    if (m_info.fps > 0.0)
-        return 0.5 / m_info.fps;
-    return 0.02;
-}
-
-bool Backend::willReencode(double start) const {
-    const double eps = alignEpsilon();
-    // The very start of the file is always a keyframe.
-    if (start <= eps)
-        return false;
-    // No analysis yet: be safe and assume an exact (re-encoded) cut is needed.
-    if (m_keyframes.isEmpty())
-        return true;
-    // Find the last keyframe at or before `start`; copy is exact only if it
-    // sits essentially on that keyframe.
-    auto it = std::upper_bound(m_keyframes.begin(), m_keyframes.end(), start + eps);
-    if (it == m_keyframes.begin())
-        return true;
-    const double kf = *(it - 1);
-    return std::abs(start - kf) > eps;
 }
 
 QUrl Backend::sourceFolder() const {
@@ -147,11 +123,10 @@ void Backend::exportClip(const QUrl &dst, double start, double end) {
         return;
     }
 
-    const bool reencode = willReencode(start);
     setBusy(true);
-    setStatus(reencode ? "Exporting (precise re-encode)…" : "Exporting (lossless)…");
+    setStatus(QStringLiteral("Exporting…"));
 
-    const QStringList args = ffmpeg::trimArgs(m_path, outPath, start, end, reencode);
+    const QStringList args = ffmpeg::trimArgs(m_path, outPath, start, end);
 
     auto *proc = new QProcess(this);
     proc->setProcessChannelMode(QProcess::MergedChannels);
@@ -161,7 +136,7 @@ void Backend::exportClip(const QUrl &dst, double start, double end) {
                 proc->deleteLater();
                 setBusy(false);
                 if (exitStatus == QProcess::NormalExit && code == 0) {
-                    setStatus(QString("Saved %1").arg(outPath));
+                    setStatus(QString());
                     emit exportDone(outPath);
                 } else {
                     setStatus(QString());

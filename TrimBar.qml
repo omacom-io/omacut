@@ -14,15 +14,29 @@ Item {
     property int thumbRevision: 0
     // True while the user is dragging anything, so the player won't fight the UI.
     property bool interacting: false
+    property int activeMode: 0  // 0 none, 1 start, 2 end, 3 playhead
+    readonly property bool trimmingRange: activeMode === 1 || activeMode === 2
 
     readonly property real handleW: 14
     readonly property real trackX: handleW
     readonly property real trackW: width - 2 * handleW
     readonly property color accent: "#FFD60A"
     readonly property color film: "#1c1c1e"
+    readonly property real activeTime: activeMode === 1 ? startSec : endSec
+    readonly property real activeHandleX: activeMode === 1
+        ? xForTime(startSec) - handleW / 2
+        : xForTime(endSec) + handleW / 2
 
     signal rangeChanged(real startSec, real endSec)
     signal scrub(real seconds)
+
+    function pad2(n) { return (n < 10 ? "0" : "") + n; }
+    function fmt(sec) {
+        if (sec < 0 || isNaN(sec)) sec = 0;
+        var m = Math.floor(sec / 60);
+        var s = sec - m * 60;
+        return pad2(m) + ":" + (s < 10 ? "0" : "") + s.toFixed(2);
+    }
 
     function xForTime(t) {
         if (durationSec <= 0)
@@ -131,6 +145,37 @@ Item {
         color: "white"
     }
 
+    // ---- floating time bubble while adjusting trim handles ----
+    Rectangle {
+        id: timeBubble
+        visible: root.trimmingRange
+        width: 82
+        height: 32
+        radius: 7
+        x: Math.max(0, Math.min(root.width - width, root.activeHandleX - width / 2))
+        y: -42
+        color: "#2c2c2f"
+
+        Text {
+            anchors.centerIn: parent
+            text: root.fmt(root.activeTime)
+            color: "white"
+            font.pixelSize: 15
+            font.family: "monospace"
+            font.weight: Font.DemiBold
+        }
+    }
+
+    Rectangle {
+        visible: root.trimmingRange
+        x: root.activeHandleX - width / 2
+        y: timeBubble.y + timeBubble.height
+        width: 2
+        height: Math.max(0, track.y - y)
+        radius: 1
+        color: "white"
+    }
+
     // ---- interaction: one MouseArea, hit-test on press (mirrors the C++ logic) ----
     MouseArea {
         anchors.fill: parent
@@ -181,6 +226,7 @@ Item {
             if (root.durationSec <= 0)
                 return;
             mode = hitTest(mouse.x);
+            root.activeMode = mode;
             root.interacting = mode !== 0;
             if (mode === 3) {
                 root.playheadSec = Math.max(root.startSec, Math.min(root.timeForX(mouse.x), root.endSec));
@@ -190,6 +236,7 @@ Item {
 
         onReleased: {
             mode = 0;
+            root.activeMode = 0;
             root.interacting = false;
         }
     }

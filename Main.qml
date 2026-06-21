@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
-import QtQuick.Dialogs
 import QtMultimedia
 
 ApplicationWindow {
@@ -13,6 +12,11 @@ ApplicationWindow {
     minimumHeight: 460
     visible: true
     title: backend.source.toString() === "" ? "omacut" : "omacut — " + fileName(backend.source)
+    readonly property bool hasVideo: backend.source.toString() !== ""
+    property string noticeText: ""
+    readonly property string statusText: noticeText !== "" ? noticeText
+        : backend.status !== "" ? backend.status
+        : ""
 
     Material.theme: Material.Dark
     Material.accent: "#FFD60A"
@@ -29,7 +33,15 @@ ApplicationWindow {
         var s = url.toString();
         return s === "" ? "" : decodeURIComponent(s.substring(s.lastIndexOf('/') + 1));
     }
+    function showNotice(text) {
+        noticeText = text;
+        noticeTimer.restart();
+    }
     function togglePlay() {
+        if (!win.hasVideo || backend.duration <= 0)
+            return;
+        if (player.priming)
+            player.finishPriming();
         if (player.playbackState === MediaPlayer.PlayingState) {
             player.pause();
             return;
@@ -40,23 +52,54 @@ ApplicationWindow {
         player.play();
     }
 
+    Shortcut {
+        sequence: "Space"
+        context: Qt.ApplicationShortcut
+        enabled: win.hasVideo
+        onActivated: togglePlay()
+    }
+
     MediaPlayer {
         id: player
         source: backend.source
         videoOutput: videoOut
-        audioOutput: AudioOutput {}
+        audioOutput: AudioOutput {
+            muted: player.priming
+        }
 
-        // Render the opening frame on load instead of showing black: a quick
-        // play→pause makes the decoder present the first frame at position 0.
+        // Render the opening frame on load instead of showing black. Playback
+        // starts muted and stops as soon as VideoOutput receives a frame.
         property bool primed: false
+        property bool priming: false
+
+        function startPriming() {
+            if (primed || priming || backend.source.toString() === "")
+                return;
+            primed = true;
+            priming = true;
+            position = 0;
+            play();
+            primeFallback.restart();
+        }
+
+        function finishPriming() {
+            if (!priming)
+                return;
+            primeFallback.stop();
+            pause();
+            position = 0;
+            priming = false;
+        }
+
         onMediaStatusChanged: {
-            if (mediaStatus === MediaPlayer.LoadedMedia && !primed) {
-                primed = true;
-                play();
-                pause();
-            }
+            if (mediaStatus === MediaPlayer.LoadedMedia || mediaStatus === MediaPlayer.BufferedMedia)
+                startPriming();
         }
         onPositionChanged: {
+            if (priming && position > 0) {
+                finishPriming();
+                return;
+            }
             // Stop at the trim end, like a clip preview.
             if (playbackState === MediaPlayer.PlayingState && position / 1000 >= trimBar.endSec) {
                 pause();
@@ -67,16 +110,108 @@ ApplicationWindow {
         }
     }
 
+    Timer {
+        id: primeFallback
+        interval: 250
+        repeat: false
+        onTriggered: player.finishPriming()
+    }
+
+    Timer {
+        id: noticeTimer
+        interval: 5000
+        repeat: false
+        onTriggered: win.noticeText = ""
+    }
+
+    component IconButton: Rectangle {
+        id: iconButton
+        implicitWidth: 44
+        implicitHeight: 44
+        radius: 22
+
+        property string iconName: "play"
+        property color iconColor: "white"
+        property color buttonColor: "#2c2c2f"
+        property string tipText: ""
+        signal clicked()
+
+        color: enabled ? buttonColor : "#2c2c2f"
+        opacity: enabled ? 1 : 0.45
+
+        HoverHandler { id: iconHover }
+        ToolTip.visible: iconHover.hovered && tipText !== ""
+        ToolTip.text: tipText
+
+        Canvas {
+            id: iconCanvas
+            anchors.centerIn: parent
+            width: 24
+            height: 24
+
+            onPaint: {
+                var ctx = getContext("2d");
+                ctx.clearRect(0, 0, width, height);
+                ctx.fillStyle = iconButton.iconColor;
+                ctx.strokeStyle = iconButton.iconColor;
+                ctx.lineWidth = 2.4;
+                ctx.lineCap = "round";
+                ctx.lineJoin = "round";
+
+                if (iconButton.iconName === "pause") {
+                    ctx.fillRect(7, 5, 4, 14);
+                    ctx.fillRect(14, 5, 4, 14);
+                } else if (iconButton.iconName === "play") {
+                    ctx.beginPath();
+                    ctx.moveTo(8, 5);
+                    ctx.lineTo(8, 19);
+                    ctx.lineTo(19, 12);
+                    ctx.closePath();
+                    ctx.fill();
+                } else if (iconButton.iconName === "download") {
+                    ctx.beginPath();
+                    ctx.moveTo(12, 4);
+                    ctx.lineTo(12, 14);
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.moveTo(7, 10);
+                    ctx.lineTo(12, 15);
+                    ctx.lineTo(17, 10);
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.moveTo(6, 20);
+                    ctx.lineTo(18, 20);
+                    ctx.stroke();
+                }
+            }
+
+            Connections {
+                target: iconButton
+                function onIconNameChanged() { iconCanvas.requestPaint(); }
+                function onIconColorChanged() { iconCanvas.requestPaint(); }
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            enabled: iconButton.enabled
+            cursorShape: Qt.PointingHandCursor
+            onClicked: iconButton.clicked()
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 16
+        anchors.margins: win.hasVideo ? 16 : 0
         spacing: 14
 
         // --- video preview ---
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            radius: 12
+            radius: win.hasVideo ? 12 : 0
             color: "black"
             clip: true
 
@@ -84,150 +219,130 @@ ApplicationWindow {
                 id: videoOut
                 anchors.fill: parent
             }
-            Label {
+            Connections {
+                target: videoOut.videoSink
+                function onVideoFrameChanged(frame) {
+                    player.finishPriming();
+                }
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                enabled: !win.hasVideo
+                cursorShape: Qt.PointingHandCursor
+                onClicked: backend.openVideoDialog()
+            }
+
+            Button {
+                id: openVideoButton
                 anchors.centerIn: parent
-                visible: backend.source.toString() === ""
-                text: "Open a video to begin"
-                color: "#5a5a5e"
-                font.pixelSize: 16
+                visible: !win.hasVideo
+                text: "Open a video"
+                highlighted: true
+                focusPolicy: Qt.NoFocus
+                font.pixelSize: 18
+                Material.foreground: "black"
+                contentItem: Label {
+                    text: openVideoButton.text
+                    font: openVideoButton.font
+                    color: "black"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: backend.openVideoDialog()
             }
         }
 
-        // --- trim bar ---
-        TrimBar {
-            id: trimBar
-            Layout.fillWidth: true
-            durationSec: backend.duration
-            thumbCount: backend.thumbCount
-            thumbRevision: backend.thumbRevision
-            onScrub: (seconds) => player.position = Math.round(seconds * 1000)
-        }
-
-        // --- controls ---
+        // --- timeline ---
         RowLayout {
+            visible: win.hasVideo
             Layout.fillWidth: true
             spacing: 10
 
-            Button {
-                text: "Open…"
-                onClicked: openDialog.open()
-            }
-            Button {
-                text: player.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
+            IconButton {
+                Layout.preferredWidth: 44
+                Layout.preferredHeight: 44
+                iconName: player.playbackState === MediaPlayer.PlayingState && !player.priming ? "pause" : "play"
+                iconColor: "#ffffff"
+                buttonColor: "#2c2c2f"
+                tipText: player.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
                 enabled: backend.duration > 0
                 onClicked: togglePlay()
             }
 
-            Item { Layout.fillWidth: true }
-
-            Label {
-                text: backend.duration > 0
-                      ? fmt(trimBar.startSec) + "  →  " + fmt(trimBar.endSec)
-                        + "    (" + fmt(trimBar.endSec - trimBar.startSec) + ")"
-                      : "—"
-                color: "#d6d6da"
-                font.pixelSize: 14
-                font.family: "monospace"
+            TrimBar {
+                id: trimBar
+                Layout.fillWidth: true
+                durationSec: backend.duration
+                thumbCount: backend.thumbCount
+                thumbRevision: backend.thumbRevision
+                onScrub: (seconds) => player.position = Math.round(seconds * 1000)
             }
 
-            Item { Layout.fillWidth: true }
-
-            // Auto-detected cut method. Re-evaluates when the start handle moves
-            // (trimBar.startSec) and when keyframe analysis lands
-            // (backend.analysisRevision).
-            RowLayout {
-                spacing: 6
-                visible: backend.duration > 0
-                property bool reenc: (backend.analysisRevision, backend.willReencode(trimBar.startSec))
-
-                Rectangle {
-                    width: 8; height: 8; radius: 4
-                    Layout.alignment: Qt.AlignVCenter
-                    color: parent.reenc ? "#FFD60A" : "#5bd66f"
-                }
-                Label {
-                    text: parent.reenc ? "Precise cut · re-encodes" : "Lossless cut · instant"
-                    color: "#b8b8bc"
-                    font.pixelSize: 13
-                    ToolTip.visible: hovered
-                    ToolTip.text: parent.reenc
-                        ? "Your start isn't on a keyframe, so the clip is re-encoded for a frame-accurate cut (slower)."
-                        : "The cut lands on a keyframe, so it's copied losslessly and instantly."
-                    HoverHandler { id: hoverHandler }
-                    property bool hovered: hoverHandler.hovered
-                }
-            }
-            Button {
-                text: "Export…"
-                highlighted: true
+            IconButton {
+                Layout.preferredWidth: 44
+                Layout.preferredHeight: 44
+                iconName: "download"
+                iconColor: "#ffffff"
+                buttonColor: "#2c2c2f"
+                tipText: "Export"
                 enabled: backend.duration > 0 && !backend.busy
-                onClicked: {
-                    saveDialog.currentFolder = backend.sourceFolder();
-                    saveDialog.selectedFile = backend.suggestedExportUrl();
-                    saveDialog.open();
-                }
+                onClicked: backend.exportDialog(trimBar.startSec, trimBar.endSec)
             }
         }
 
         // --- status line ---
-        Label {
+        Item {
+            visible: win.hasVideo
             Layout.fillWidth: true
-            visible: backend.status !== ""
-            text: backend.status
-            color: "#8a8a8e"
-            font.pixelSize: 12
-            elide: Text.ElideMiddle
-        }
-    }
+            Layout.preferredHeight: 26
 
-    BusyIndicator {
-        anchors.centerIn: parent
-        running: backend.busy
-        visible: backend.busy
+            Label {
+                anchors.centerIn: parent
+                width: parent.width
+                visible: win.statusText !== ""
+                text: win.statusText
+                color: win.noticeText !== "" ? "#FFD60A" : "#b8b8bc"
+                font.pixelSize: 13
+                font.family: "monospace"
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideMiddle
+            }
+
+            Row {
+                anchors.centerIn: parent
+                visible: win.statusText === "" && backend.duration > 0 && !trimBar.trimmingRange
+                spacing: 18
+
+                Label {
+                    text: fmt(trimBar.endSec - trimBar.startSec)
+                    color: "#d6d6da"
+                    font.pixelSize: 13
+                    font.family: "monospace"
+                }
+            }
+        }
     }
 
     Connections {
         target: backend
         function onInfoChanged() {
+            win.noticeText = "";
+            noticeTimer.stop();
             player.primed = false;
             trimBar.startSec = 0;
             trimBar.endSec = backend.duration;
             trimBar.playheadSec = 0;
         }
         function onExportDone(path) {
-            messageDialog.title = "Done";
-            messageDialog.text = "Trimmed video saved to:\n" + path;
-            messageDialog.open();
+            win.showNotice("Saved " + path);
         }
         function onExportFailed(message) {
-            messageDialog.title = "Export failed";
-            messageDialog.text = message;
-            messageDialog.open();
+            win.showNotice("Export failed: " + message);
         }
         function onLoadError(message) {
-            messageDialog.title = "Cannot open video";
-            messageDialog.text = message;
-            messageDialog.open();
+            win.showNotice("Cannot open video: " + message);
         }
-    }
-
-    FileDialog {
-        id: openDialog
-        title: "Open video"
-        nameFilters: ["Video files (*.mp4 *.mov *.mkv *.avi *.webm *.m4v)", "All files (*)"]
-        onAccepted: backend.load(selectedFile)
-    }
-
-    FileDialog {
-        id: saveDialog
-        title: "Export trimmed video"
-        fileMode: FileDialog.SaveFile
-        nameFilters: ["Video files (*.mp4 *.mov *.mkv *.avi *.webm *.m4v)", "All files (*)"]
-        onAccepted: backend.exportClip(selectedFile, trimBar.startSec, trimBar.endSec)
-    }
-
-    MessageDialog {
-        id: messageDialog
-        buttons: MessageDialog.Ok
     }
 }

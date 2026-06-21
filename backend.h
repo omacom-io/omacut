@@ -7,6 +7,7 @@
 #include "ffmpeg.h"
 
 class ThumbProvider;
+class FilePicker;
 
 // The bridge between QML and the ffmpeg/ffprobe layer. Holds the currently
 // loaded video's info and drives thumbnail generation and export.
@@ -20,12 +21,11 @@ class Backend : public QObject {
     Q_PROPERTY(int thumbRevision READ thumbRevision NOTIFY thumbsChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
-    // Bumps whenever the keyframe analysis changes; reference it in QML
-    // bindings so willReencode() re-evaluates once analysis is ready.
-    Q_PROPERTY(int analysisRevision READ analysisRevision NOTIFY analysisChanged)
 
 public:
     explicit Backend(ThumbProvider *provider, QObject *parent = nullptr);
+    explicit Backend(ThumbProvider *provider, FilePicker *filePicker,
+                     QObject *parent = nullptr);
 
     QUrl source() const { return m_source; }
     double duration() const { return m_info.duration; }
@@ -35,10 +35,13 @@ public:
     int thumbRevision() const { return m_thumbRevision; }
     bool busy() const { return m_busy; }
     QString status() const { return m_status; }
-    int analysisRevision() const { return m_analysisRevision; }
 
-    // Load a video (probes it, then kicks off thumbnail + keyframe analysis).
+    // Load a video (probes it, then kicks off thumbnail generation).
     Q_INVOKABLE bool load(const QUrl &url);
+
+    // Open native desktop file dialogs.
+    Q_INVOKABLE void openVideoDialog();
+    Q_INVOKABLE void exportDialog(double start, double end);
 
     // The folder containing the loaded video, for the save dialog.
     Q_INVOKABLE QUrl sourceFolder() const;
@@ -46,12 +49,7 @@ public:
     // Suggested "<name>_trimmed.<ext>" target next to the source.
     Q_INVOKABLE QUrl suggestedExportUrl() const;
 
-    // True if a cut starting at `start` would need re-encoding to be accurate
-    // (i.e. the start does not land on a keyframe). This is the auto decision.
-    Q_INVOKABLE bool willReencode(double start) const;
-
-    // Write [start, end] (seconds) of the loaded video to dst, choosing copy
-    // vs re-encode automatically via willReencode().
+    // Write [start, end] (seconds) of the loaded video to dst.
     Q_INVOKABLE void exportClip(const QUrl &dst, double start, double end);
 
 signals:
@@ -59,7 +57,6 @@ signals:
     void thumbsChanged();
     void busyChanged();
     void statusChanged();
-    void analysisChanged();
     void exportDone(const QString &path);
     void exportFailed(const QString &message);
     void loadError(const QString &message);
@@ -68,17 +65,15 @@ private:
     void setBusy(bool busy);
     void setStatus(const QString &status);
     void startThumbs();
-    void startKeyframes();
-    double alignEpsilon() const;
+    void wireFilePicker();
 
     ThumbProvider *m_provider;
+    FilePicker *m_filePicker;
     ffmpeg::VideoInfo m_info;
     QString m_path;
     QUrl m_source;
     int m_thumbCount = 0;
     int m_thumbRevision = 0;
-    int m_analysisRevision = 0;
     bool m_busy = false;
     QString m_status;
-    QVector<double> m_keyframes;
 };
