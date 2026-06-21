@@ -4,6 +4,8 @@
 #include <QFileInfo>
 #include <QProcess>
 
+#include <memory>
+
 #include "filepicker.h"
 #include "portalfilepicker.h"
 #include "thumbprovider.h"
@@ -12,6 +14,17 @@
 namespace {
 constexpr int kThumbCount = 12;
 constexpr int kThumbRevealMs = 70;
+
+QString mp4PathFor(const QString &path) {
+    const QFileInfo file(path);
+    if (file.suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive) == 0)
+        return path;
+
+    const QString baseName = file.completeBaseName().isEmpty()
+        ? file.fileName()
+        : file.completeBaseName();
+    return file.dir().filePath(baseName + QStringLiteral(".mp4"));
+}
 }
 
 Backend::Backend(ThumbProvider *provider, QObject *parent)
@@ -149,8 +162,7 @@ QUrl Backend::suggestedExportUrl() const {
     if (m_path.isEmpty())
         return {};
     const QFileInfo src(m_path);
-    const QString target =
-        src.dir().filePath(src.completeBaseName() + "_trimmed." + src.suffix());
+    const QString target = src.dir().filePath(src.completeBaseName() + "_trimmed.mp4");
     return QUrl::fromLocalFile(target);
 }
 
@@ -158,7 +170,7 @@ void Backend::exportClip(const QUrl &dst, double start, double end) {
     if (m_path.isEmpty() || !m_info.ok)
         return;
 
-    const QString outPath = dst.toLocalFile();
+    const QString outPath = mp4PathFor(dst.toLocalFile());
     const QString ffmpegBin = ffmpeg::toolPath("ffmpeg");
     if (ffmpegBin.isEmpty()) {
         emit exportFailed("`ffmpeg` was not found on your PATH.");
@@ -171,9 +183,13 @@ void Backend::exportClip(const QUrl &dst, double start, double end) {
     const QStringList args = ffmpeg::trimArgs(m_path, outPath, start, end);
 
     auto *proc = new QProcess(this);
+    auto completed = std::make_shared<bool>(false);
     proc->setProcessChannelMode(QProcess::MergedChannels);
     connect(proc, &QProcess::finished, this,
-            [this, proc, outPath](int code, QProcess::ExitStatus exitStatus) {
+            [this, proc, outPath, completed](int code, QProcess::ExitStatus exitStatus) {
+                if (*completed)
+                    return;
+                *completed = true;
                 const QString err = QString::fromUtf8(proc->readAll()).trimmed();
                 proc->deleteLater();
                 setBusy(false);
@@ -184,6 +200,17 @@ void Backend::exportClip(const QUrl &dst, double start, double end) {
                     setStatus(QString());
                     emit exportFailed(err.isEmpty() ? "ffmpeg trim failed." : err);
                 }
+            });
+    connect(proc, &QProcess::errorOccurred, this,
+            [this, proc, completed](QProcess::ProcessError error) {
+                if (error != QProcess::FailedToStart || *completed)
+                    return;
+                *completed = true;
+                const QString err = proc->errorString();
+                proc->deleteLater();
+                setBusy(false);
+                setStatus(QString());
+                emit exportFailed(err.isEmpty() ? "Could not start ffmpeg." : err);
             });
     proc->start(ffmpegBin, args);
 }

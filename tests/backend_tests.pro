@@ -1,4 +1,4 @@
-QT += core gui quick testlib dbus
+QT += core gui quick quickcontrols2 multimedia testlib dbus
 CONFIG += c++17 testcase
 TARGET = backend_tests
 TEMPLATE = app

@@ -1,7 +1,9 @@
 #include "portalfilepicker.h"
 
 #include <QDBusConnection>
+#include <QDBusArgument>
 #include <QDBusInterface>
+#include <QDBusMetaType>
 #include <QDBusObjectPath>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
@@ -10,6 +12,93 @@
 #include <QRandomGenerator>
 
 namespace {
+struct PortalFilterRule {
+    uint type;
+    QString pattern;
+};
+
+using PortalFilterRules = QList<PortalFilterRule>;
+
+struct PortalFileFilter {
+    QString name;
+    PortalFilterRules rules;
+};
+
+using PortalFileFilters = QList<PortalFileFilter>;
+
+QDBusArgument &operator<<(QDBusArgument &argument, const PortalFilterRule &rule) {
+    argument.beginStructure();
+    argument << rule.type << rule.pattern;
+    argument.endStructure();
+    return argument;
+}
+
+const QDBusArgument &operator>>(const QDBusArgument &argument, PortalFilterRule &rule) {
+    argument.beginStructure();
+    argument >> rule.type >> rule.pattern;
+    argument.endStructure();
+    return argument;
+}
+
+QDBusArgument &operator<<(QDBusArgument &argument, const PortalFileFilter &filter) {
+    argument.beginStructure();
+    argument << filter.name << filter.rules;
+    argument.endStructure();
+    return argument;
+}
+
+const QDBusArgument &operator>>(const QDBusArgument &argument, PortalFileFilter &filter) {
+    argument.beginStructure();
+    argument >> filter.name >> filter.rules;
+    argument.endStructure();
+    return argument;
+}
+
+void registerPortalFilterTypes() {
+    static const bool registered = [] {
+        qDBusRegisterMetaType<PortalFilterRule>();
+        qDBusRegisterMetaType<PortalFilterRules>();
+        qDBusRegisterMetaType<PortalFileFilter>();
+        qDBusRegisterMetaType<PortalFileFilters>();
+        return true;
+    }();
+    Q_UNUSED(registered);
+}
+
+PortalFileFilter videoFilter() {
+    return {
+        QStringLiteral("Video files"),
+        {
+            {1, QStringLiteral("video/*")},
+            {0, QStringLiteral("*.avi")},
+            {0, QStringLiteral("*.m4v")},
+            {0, QStringLiteral("*.mkv")},
+            {0, QStringLiteral("*.mov")},
+            {0, QStringLiteral("*.mp4")},
+            {0, QStringLiteral("*.mpeg")},
+            {0, QStringLiteral("*.mpg")},
+            {0, QStringLiteral("*.webm")},
+        },
+    };
+}
+
+PortalFileFilters videoFilters() {
+    registerPortalFilterTypes();
+    return {
+        videoFilter(),
+        {QStringLiteral("All files"), {{0, QStringLiteral("*")}}},
+    };
+}
+
+PortalFileFilter mp4Filter() {
+    registerPortalFilterTypes();
+    return {QStringLiteral("MP4 video"), {{0, QStringLiteral("*.mp4")}}};
+}
+
+PortalFileFilters mp4Filters() {
+    return {mp4Filter()};
+}
+
 QString portalToken() {
     return QStringLiteral("omacut_%1").arg(QRandomGenerator::global()->generate());
 }
@@ -30,6 +119,8 @@ void PortalFilePicker::openVideo() {
     options.insert(QStringLiteral("modal"), true);
     options.insert(QStringLiteral("multiple"), false);
     options.insert(QStringLiteral("current_folder"), portalPathBytes(QDir::homePath()));
+    options.insert(QStringLiteral("filters"), QVariant::fromValue(videoFilters()));
+    options.insert(QStringLiteral("current_filter"), QVariant::fromValue(videoFilter()));
 
     requestFile(QStringLiteral("OpenFile"), QStringLiteral("Open Video File"), options, Action::Open);
 }
@@ -43,6 +134,8 @@ void PortalFilePicker::exportVideo(const QUrl &suggestedUrl, double start, doubl
     options.insert(QStringLiteral("modal"), true);
     options.insert(QStringLiteral("current_folder"), portalPathBytes(target.absolutePath()));
     options.insert(QStringLiteral("current_name"), target.fileName());
+    options.insert(QStringLiteral("filters"), QVariant::fromValue(mp4Filters()));
+    options.insert(QStringLiteral("current_filter"), QVariant::fromValue(mp4Filter()));
 
     if (requestFile(QStringLiteral("SaveFile"), QStringLiteral("Save Video File"),
                     options, Action::Export)) {

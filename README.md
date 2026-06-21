@@ -9,6 +9,7 @@ Built using **Qt Quick (QML)** UI with the Material style — the same Qt stack 
 - *Escape*: Open a new file to trim.
 - *Space*: Start/stop video playback.
 - *Return*: Export the current trim.
+- *Keypad Enter*: Export the current trim.
 
 ## Install
 
@@ -18,6 +19,8 @@ Install via the Omarchy Package Repository via the `omacut` package. It's instal
 
 - `xdg-desktop-portal` and a portal backend for the file picker
 - `ffmpeg` and `ffprobe` on your PATH (used at runtime)
+
+Exports are always written as MP4 files, regardless of the input video's container.
 
 ## Build
 

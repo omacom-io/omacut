@@ -44,7 +44,7 @@ public:
     Q_INVOKABLE void openVideoDialog();
     Q_INVOKABLE void exportDialog(double start, double end);
 
-    // Suggested "<name>_trimmed.<ext>" target next to the source.
+    // Suggested "<name>_trimmed.mp4" target next to the source.
     Q_INVOKABLE QUrl suggestedExportUrl() const;
 
     // Write [start, end] (seconds) of the loaded video to dst.
