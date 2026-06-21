@@ -1,4 +1,8 @@
 build/
+pkg/
+src/
+*.pkg.tar.*
+*.src.tar.*
 *.o
 *.moc
 moc_*.cpp
