@@ -125,6 +125,7 @@ private slots:
     void exportZeroLengthClipFails();
     void exportStartFailureClearsBusy();
     void failedExportPreservesExistingFile();
+    void qmlDoesNotCreateAudioOutputWithoutVideo();
     void qmlShortcutsTriggerBackendActions();
     void trimArgsReencodeForPreciseCuts();
 
@@ -139,6 +140,8 @@ private:
 };
 
 void BackendTests::initTestCase() {
+    QQuickStyle::setStyle(QStringLiteral("Material"));
+
     QVERIFY2(m_dir.isValid(), "temporary directory is valid");
     m_videoPath = m_dir.filePath(QStringLiteral("clip.mp4"));
 
@@ -483,9 +486,20 @@ void BackendTests::failedExportPreservesExistingFile() {
     QVERIFY(!QFileInfo::exists(outPath + QStringLiteral(".omacut-part.mp4")));
 }
 
-void BackendTests::qmlShortcutsTriggerBackendActions() {
-    QQuickStyle::setStyle(QStringLiteral("Material"));
+void BackendTests::qmlDoesNotCreateAudioOutputWithoutVideo() {
+    ShortcutBackend backend(QUrl(), 0.0);
+    QQmlApplicationEngine engine;
+    engine.addImageProvider(QStringLiteral("thumbs"), new ThumbProvider);
+    engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.load(QUrl::fromLocalFile(mainQmlPath()));
 
+    QVERIFY2(!engine.rootObjects().isEmpty(), qPrintable(mainQmlPath()));
+    QObject *root = engine.rootObjects().first();
+    QVERIFY(root->property("audioOutputReady").isValid());
+    QCOMPARE(root->property("audioOutputReady").toBool(), false);
+}
+
+void BackendTests::qmlShortcutsTriggerBackendActions() {
     ShortcutBackend backend(QUrl::fromLocalFile(m_dir.filePath(QStringLiteral("shortcut-placeholder.mp4"))),
                             1.0);
     QQmlApplicationEngine engine;
@@ -496,6 +510,7 @@ void BackendTests::qmlShortcutsTriggerBackendActions() {
     QVERIFY2(!engine.rootObjects().isEmpty(), qPrintable(mainQmlPath()));
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     QVERIFY(window);
+    QTRY_VERIFY_WITH_TIMEOUT(window->property("audioOutputReady").toBool(), 3000);
 
     window->show();
     window->requestActivate();

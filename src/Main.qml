@@ -14,6 +14,8 @@ ApplicationWindow {
     visible: true
     title: backend.source.toString() === "" ? "omacut" : "omacut — " + fileName(backend.source)
     readonly property bool hasVideo: backend.source.toString() !== ""
+    readonly property bool audioOutputReady: audioOutput !== null
+    property var audioOutput: null
     property string noticeText: ""
     readonly property string statusText: noticeText !== "" ? noticeText
         : backend.status !== "" ? backend.status
@@ -40,9 +42,21 @@ ApplicationWindow {
             return;
         backend.exportDialog(trimBar.startSec, trimBar.endSec);
     }
+    function ensureAudioOutput() {
+        if (audioOutput === null && win.hasVideo)
+            audioOutput = audioOutputComponent.createObject(win);
+    }
+    function releaseAudioOutput() {
+        if (audioOutput === null)
+            return;
+        var oldAudioOutput = audioOutput;
+        audioOutput = null;
+        oldAudioOutput.destroy();
+    }
     function togglePlay() {
         if (!win.hasVideo || backend.duration <= 0)
             return;
+        ensureAudioOutput();
         if (player.priming)
             player.finishPriming();
         if (player.playbackState === MediaPlayer.PlayingState) {
@@ -53,6 +67,21 @@ ApplicationWindow {
         if (pos < trimBar.startSec || pos >= trimBar.endSec)
             player.position = Math.round(trimBar.startSec * 1000);
         player.play();
+    }
+
+    Component.onCompleted: ensureAudioOutput()
+    onHasVideoChanged: {
+        if (hasVideo) {
+            ensureAudioOutput();
+        } else {
+            player.stop();
+            releaseAudioOutput();
+        }
+    }
+    onClosing: {
+        player.stop();
+        releaseAudioOutput();
+        Qt.quit();
     }
 
     Shortcut {
@@ -86,9 +115,7 @@ ApplicationWindow {
         id: player
         source: backend.source
         videoOutput: videoOut
-        audioOutput: AudioOutput {
-            muted: player.priming
-        }
+        audioOutput: win.audioOutput
 
         // Render the opening frame on load instead of showing black. Playback
         // starts muted and stops as soon as VideoOutput receives a frame.
@@ -98,6 +125,7 @@ ApplicationWindow {
         function startPriming() {
             if (primed || priming || backend.source.toString() === "")
                 return;
+            win.ensureAudioOutput();
             primed = true;
             priming = true;
             position = 0;
@@ -130,6 +158,13 @@ ApplicationWindow {
             }
             if (!trimBar.interacting)
                 trimBar.playheadSec = position / 1000;
+        }
+    }
+
+    Component {
+        id: audioOutputComponent
+        AudioOutput {
+            muted: player.priming
         }
     }
 
