@@ -356,6 +356,10 @@ ApplicationWindow {
         function onInfoChanged() {
             win.noticeText = "";
             noticeTimer.stop();
+            // Reset priming too, or a video opened mid-prime would stay black:
+            // startPriming() bails while priming is still true.
+            primeFallback.stop();
+            player.priming = false;
             player.primed = false;
             trimBar.startSec = 0;
             trimBar.endSec = backend.duration;
