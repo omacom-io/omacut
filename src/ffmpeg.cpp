@@ -8,6 +8,14 @@
 
 namespace ffmpeg {
 
+namespace {
+// Upper bound on a synchronous probe so a hung/unresponsive file (e.g. a stalled
+// network mount) can't freeze the caller — load() runs probe() on the UI thread.
+constexpr int kProbeTimeoutMs = 15000;
+// Poll granularity while waiting on a thumbnail child, so cancellation is prompt.
+constexpr int kThumbPollMs = 50;
+}
+
 QString toolPath(const QString &tool) {
     return QStandardPaths::findExecutable(tool);
 }
@@ -31,7 +39,12 @@ VideoInfo probe(const QString &path) {
         "-select_streams", "v:0",
         path,
     });
-    proc.waitForFinished(-1);
+    if (!proc.waitForFinished(kProbeTimeoutMs)) {
+        proc.kill();
+        proc.waitForFinished(-1);
+        info.error = "ffprobe timed out reading this file.";
+        return info;
+    }
 
     if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
         info.error = QString::fromUtf8(proc.readAllStandardError()).trimmed();
@@ -67,7 +80,8 @@ VideoInfo probe(const QString &path) {
     return info;
 }
 
-QImage thumbnail(const QString &path, double time, int height) {
+QImage thumbnail(const QString &path, double time, int height,
+                 const std::atomic<bool> *cancel) {
     const QString ffmpeg = toolPath("ffmpeg");
     if (ffmpeg.isEmpty())
         return {};
@@ -83,7 +97,19 @@ QImage thumbnail(const QString &path, double time, int height) {
         "-vcodec", "mjpeg",
         "pipe:1",
     });
-    proc.waitForFinished(-1);
+
+    // Poll instead of waitForFinished(-1) so a cancel request can kill the child
+    // promptly — otherwise the std::future destructor in ThumbWorker would block
+    // the UI thread until ffmpeg finishes on its own.
+    while (!proc.waitForFinished(kThumbPollMs)) {
+        if (proc.state() == QProcess::NotRunning)
+            break;  // failed to start, or exited between polls
+        if (cancel && cancel->load(std::memory_order_relaxed)) {
+            proc.kill();
+            proc.waitForFinished(-1);
+            return {};
+        }
+    }
 
     if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0)
         return {};
