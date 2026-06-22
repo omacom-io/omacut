@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QProcess>
 
+#include <cstdio>
 #include <memory>
 
 #include "filepicker.h"
@@ -25,6 +26,12 @@ QString mp4PathFor(const QString &path) {
         ? file.fileName()
         : file.completeBaseName();
     return file.dir().filePath(baseName + QStringLiteral(".mp4"));
+}
+
+bool replaceWithTemp(const QString &tmpPath, const QString &outPath) {
+    const QByteArray tmpName = QFile::encodeName(tmpPath);
+    const QByteArray outName = QFile::encodeName(outPath);
+    return std::rename(tmpName.constData(), outName.constData()) == 0;
 }
 }
 
@@ -157,7 +164,7 @@ void Backend::stopThumbs() {
     ThumbWorker *worker = m_thumbWorker;
     m_thumbWorker = nullptr;
     worker->disconnect(this);
-    worker->requestInterruption();
+    worker->requestStop();
     worker->wait();
     delete worker;
 }
@@ -189,9 +196,8 @@ void Backend::exportClip(const QUrl &dst, double start, double end) {
     setBusy(true);
     setStatus(QStringLiteral("Exporting…"));
 
-    // Encode to a sibling temp file and move it into place only on success, so a
-    // failed/cancelled export never truncates an existing file — and exporting
-    // on top of the source can't corrupt it (ffmpeg reads m_path, writes tmp).
+    // Encode to a sibling temp file and atomically replace the target only after
+    // success, so failed/cancelled exports preserve any existing file.
     const QString tmpPath = outPath + QStringLiteral(".omacut-part.mp4");
     QFile::remove(tmpPath);
     const QStringList args = ffmpeg::trimArgs(m_path, tmpPath, start, end);
@@ -209,8 +215,7 @@ void Backend::exportClip(const QUrl &dst, double start, double end) {
                 setBusy(false);
                 setStatus(QString());
                 if (exitStatus == QProcess::NormalExit && code == 0) {
-                    QFile::remove(outPath);
-                    if (QFile::rename(tmpPath, outPath)) {
+                    if (replaceWithTemp(tmpPath, outPath)) {
                         emit exportDone(outPath);
                     } else {
                         QFile::remove(tmpPath);

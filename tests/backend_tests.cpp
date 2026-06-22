@@ -1,6 +1,7 @@
 #include <QtTest>
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
@@ -15,6 +16,7 @@
 #include "backend.h"
 #include "filepicker.h"
 #include "thumbprovider.h"
+#include "thumbworker.h"
 
 class FakeFilePicker : public FilePicker {
     Q_OBJECT
@@ -114,9 +116,12 @@ private slots:
     void pickerSelectionLoadsVideo();
     void thumbnailSlotsAreExposedImmediately();
     void thumbProviderUsesRevisionPrefixedIds();
+    void thumbProviderScalesHeightOnlyRequests();
+    void thumbnailWorkerStopsBlockedJobs();
     void exportDialogDelegatesSuggestedUrlAndRange();
     void suggestedExportUrlAlwaysUsesMp4();
     void exportClipWritesMp4();
+    void exportClipCanReplaceSourceFile();
     void exportZeroLengthClipFails();
     void exportStartFailureClearsBusy();
     void failedExportPreservesExistingFile();
@@ -246,6 +251,57 @@ void BackendTests::thumbProviderUsesRevisionPrefixedIds() {
     QCOMPARE(size, image.size());
 }
 
+void BackendTests::thumbProviderScalesHeightOnlyRequests() {
+    ThumbProvider provider;
+    provider.setImages(QVector<QImage>(1));
+
+    QImage image(200, 100, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    provider.setImage(0, image);
+
+    QSize originalSize;
+    const QImage scaled = provider.requestImage(QStringLiteral("1/0"), &originalSize, QSize(0, 50));
+
+    QCOMPARE(originalSize, image.size());
+    QCOMPARE(scaled.size(), QSize(100, 50));
+}
+
+void BackendTests::thumbnailWorkerStopsBlockedJobs() {
+    const QString sleepBin = QStandardPaths::findExecutable(QStringLiteral("sleep"));
+    QVERIFY2(!sleepBin.isEmpty(), "sleep is available");
+
+    QTemporaryDir pathDir;
+    QVERIFY(pathDir.isValid());
+    const QString fakeFfmpeg = pathDir.filePath(QStringLiteral("ffmpeg"));
+    QFile fake(fakeFfmpeg);
+    QVERIFY(fake.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    fake.write(QStringLiteral("#!/bin/sh\nexec \"%1\" 30\n").arg(sleepBin).toUtf8());
+    fake.close();
+    QVERIFY(fake.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                | QFileDevice::ExeOwner));
+
+    EnvVarGuard pathGuard("PATH");
+    qputenv("PATH", QFile::encodeName(pathDir.path()));
+
+    ThumbWorker worker(QStringLiteral("unused.mp4"), 60.0, 4);
+    worker.start();
+    QTest::qWait(100);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    worker.requestStop();
+    const bool stopped = worker.wait(2000);
+    const qint64 elapsedMs = elapsed.elapsed();
+    if (!stopped) {
+        worker.terminate();
+        worker.wait(2000);
+    }
+
+    QVERIFY2(stopped, qPrintable(QStringLiteral("worker did not stop within 2000 ms")));
+    QVERIFY2(elapsedMs < 1500,
+             qPrintable(QStringLiteral("worker stop took %1 ms").arg(elapsedMs)));
+}
+
 void BackendTests::exportDialogDelegatesSuggestedUrlAndRange() {
     ThumbProvider provider;
     auto *picker = new FakeFilePicker;
@@ -303,6 +359,34 @@ void BackendTests::exportClipWritesMp4() {
     QVERIFY(ffmpeg::probe(mp4Path).ok);
     QVERIFY2(formatName(mp4Path).contains(QStringLiteral("mp4")),
              qPrintable(formatName(mp4Path)));
+}
+
+void BackendTests::exportClipCanReplaceSourceFile() {
+    const QString sourcePath = m_dir.filePath(QStringLiteral("replace-source.mp4"));
+    QVERIFY(QFile::copy(m_videoPath, sourcePath));
+
+    ThumbProvider provider;
+    auto *picker = new FakeFilePicker;
+    Backend backend(&provider, picker);
+    QSignalSpy doneSpy(&backend, &Backend::exportDone);
+    QSignalSpy failedSpy(&backend, &Backend::exportFailed);
+
+    QVERIFY(backend.load(QUrl::fromLocalFile(sourcePath)));
+    waitForBackgroundWork(backend);
+
+    backend.exportClip(QUrl::fromLocalFile(sourcePath), 0.0, 1.0);
+
+    QVERIFY(backend.busy());
+    QTRY_VERIFY_WITH_TIMEOUT(doneSpy.count() + failedSpy.count() > 0, 20000);
+
+    QCOMPARE(failedSpy.count(), 0);
+    QCOMPARE(doneSpy.count(), 1);
+    QCOMPARE(doneSpy.first().at(0).toString(), sourcePath);
+    QVERIFY(QFileInfo::exists(sourcePath));
+    QVERIFY(ffmpeg::probe(sourcePath).ok);
+    QVERIFY2(formatName(sourcePath).contains(QStringLiteral("mp4")),
+             qPrintable(formatName(sourcePath)));
+    QVERIFY(!QFileInfo::exists(sourcePath + QStringLiteral(".omacut-part.mp4")));
 }
 
 void BackendTests::exportZeroLengthClipFails() {

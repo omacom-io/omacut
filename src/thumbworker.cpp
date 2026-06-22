@@ -3,26 +3,28 @@
 #include "ffmpeg.h"
 
 #include <algorithm>
-#include <atomic>
 #include <deque>
 #include <future>
-#include <memory>
 
 namespace {
 constexpr int kMaxThumbJobs = 4;
+}
+
+void ThumbWorker::requestStop() {
+    m_cancel->store(true, std::memory_order_relaxed);
+    QThread::requestInterruption();
 }
 
 void ThumbWorker::run() {
     if (m_count <= 0)
         return;
 
+    const auto cancel = m_cancel;
+    if (cancel->load(std::memory_order_relaxed))
+        return;
+
     const int idealThreads = std::max(1, QThread::idealThreadCount());
     const int maxJobs = std::min({m_count, kMaxThumbJobs, idealThreads});
-
-    // Shared with every async job so an interruption can kill in-flight ffmpeg
-    // children. Set it before returning, otherwise the std::future destructors
-    // would block this thread (and thus stopThumbs()) until ffmpeg exits.
-    auto cancel = std::make_shared<std::atomic<bool>>(false);
 
     std::deque<std::future<QImage>> jobs;
     int nextIndex = 0;

@@ -30,7 +30,12 @@ QImage ThumbProvider::requestImage(const QString &id, QSize *size, const QSize &
         return {};
     if (size)
         *size = img.size();
-    if (requested.width() > 0 && requested.height() > 0)
-        img = img.scaled(requested, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+    QSize target = requested;
+    if (target.width() <= 0 && target.height() > 0 && img.height() > 0)
+        target.setWidth(qMax(1, qRound(double(img.width()) * target.height() / img.height())));
+    if (target.height() <= 0 && target.width() > 0 && img.width() > 0)
+        target.setHeight(qMax(1, qRound(double(img.height()) * target.width() / img.width())));
+    if (target.width() > 0 && target.height() > 0)
+        img = img.scaled(target, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
     return img;
 }
