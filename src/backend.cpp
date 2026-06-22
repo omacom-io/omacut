@@ -1,6 +1,7 @@
 #include "backend.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 
@@ -167,8 +168,13 @@ QUrl Backend::suggestedExportUrl() const {
 }
 
 void Backend::exportClip(const QUrl &dst, double start, double end) {
-    if (m_path.isEmpty() || !m_info.ok)
+    if (m_path.isEmpty() || !m_info.ok || m_busy)
         return;
+
+    if (end - start <= 0.0) {
+        emit exportFailed("The selected clip has no length.");
+        return;
+    }
 
     const QString outPath = mp4PathFor(dst.toLocalFile());
     const QString ffmpegBin = ffmpeg::toolPath("ffmpeg");
@@ -180,29 +186,40 @@ void Backend::exportClip(const QUrl &dst, double start, double end) {
     setBusy(true);
     setStatus(QStringLiteral("Exporting…"));
 
-    const QStringList args = ffmpeg::trimArgs(m_path, outPath, start, end);
+    // Encode to a sibling temp file and move it into place only on success, so a
+    // failed/cancelled export never truncates an existing file — and exporting
+    // on top of the source can't corrupt it (ffmpeg reads m_path, writes tmp).
+    const QString tmpPath = outPath + QStringLiteral(".omacut-part.mp4");
+    QFile::remove(tmpPath);
+    const QStringList args = ffmpeg::trimArgs(m_path, tmpPath, start, end);
 
     auto *proc = new QProcess(this);
     auto completed = std::make_shared<bool>(false);
     proc->setProcessChannelMode(QProcess::MergedChannels);
     connect(proc, &QProcess::finished, this,
-            [this, proc, outPath, completed](int code, QProcess::ExitStatus exitStatus) {
+            [this, proc, outPath, tmpPath, completed](int code, QProcess::ExitStatus exitStatus) {
                 if (*completed)
                     return;
                 *completed = true;
                 const QString err = QString::fromUtf8(proc->readAll()).trimmed();
                 proc->deleteLater();
                 setBusy(false);
+                setStatus(QString());
                 if (exitStatus == QProcess::NormalExit && code == 0) {
-                    setStatus(QString());
-                    emit exportDone(outPath);
+                    QFile::remove(outPath);
+                    if (QFile::rename(tmpPath, outPath)) {
+                        emit exportDone(outPath);
+                    } else {
+                        QFile::remove(tmpPath);
+                        emit exportFailed("Could not write the exported file.");
+                    }
                 } else {
-                    setStatus(QString());
+                    QFile::remove(tmpPath);
                     emit exportFailed(err.isEmpty() ? "ffmpeg trim failed." : err);
                 }
             });
     connect(proc, &QProcess::errorOccurred, this,
-            [this, proc, completed](QProcess::ProcessError error) {
+            [this, proc, tmpPath, completed](QProcess::ProcessError error) {
                 if (error != QProcess::FailedToStart || *completed)
                     return;
                 *completed = true;
@@ -210,6 +227,7 @@ void Backend::exportClip(const QUrl &dst, double start, double end) {
                 proc->deleteLater();
                 setBusy(false);
                 setStatus(QString());
+                QFile::remove(tmpPath);
                 emit exportFailed(err.isEmpty() ? "Could not start ffmpeg." : err);
             });
     proc->start(ffmpegBin, args);
