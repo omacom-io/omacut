@@ -107,9 +107,12 @@ void Backend::exportDialog(double start, double end) {
 void Backend::startThumbs() {
     auto *worker = new ThumbWorker(m_path, m_info.duration, kThumbCount);
     m_thumbWorker = worker;
+    // Pair the pointer check with the revision: a recycled worker address could
+    // otherwise let a stale queued callback write into the new filmstrip.
+    const int revision = m_thumbRevision;
 
-    connect(worker, &ThumbWorker::thumbReady, this, [this, worker](int index, const QImage &image) {
-        if (worker != m_thumbWorker)
+    connect(worker, &ThumbWorker::thumbReady, this, [this, worker, revision](int index, const QImage &image) {
+        if (worker != m_thumbWorker || revision != m_thumbRevision)
             return;
         m_provider->setImage(index, image);
         m_thumbAvailableCount = qMax(m_thumbAvailableCount, index + 1);
@@ -118,8 +121,8 @@ void Backend::startThumbs() {
         if (!m_thumbRevealTimer.isActive())
             m_thumbRevealTimer.start();
     });
-    connect(worker, &ThumbWorker::finished, this, [this, worker] {
-        if (worker == m_thumbWorker) {
+    connect(worker, &ThumbWorker::finished, this, [this, worker, revision] {
+        if (worker == m_thumbWorker && revision == m_thumbRevision) {
             m_thumbWorker = nullptr;
             m_thumbWorkerDone = true;
             if (m_thumbReadyCount >= m_thumbCount)
