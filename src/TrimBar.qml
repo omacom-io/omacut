@@ -1,4 +1,5 @@
 import QtQuick
+import "Format.js" as Format
 
 // A thumbnail filmstrip with two draggable handles and a scrubbable playhead.
 // All times are in seconds.
@@ -31,13 +32,7 @@ Item {
     signal rangeChanged(real startSec, real endSec)
     signal scrub(real seconds)
 
-    function pad2(n) { return (n < 10 ? "0" : "") + n; }
-    function fmt(sec) {
-        if (sec < 0 || isNaN(sec)) sec = 0;
-        var m = Math.floor(sec / 60);
-        var s = sec - m * 60;
-        return pad2(m) + ":" + (s < 10 ? "0" : "") + s.toFixed(2);
-    }
+    function fmt(sec) { return Format.fmt(sec); }
 
     function xForTime(t) {
         if (durationSec <= 0)
@@ -69,6 +64,9 @@ Item {
                 Image {
                     width: track.width / Math.max(root.thumbCount, 1)
                     height: track.height
+                    // Bound the decoded texture to the strip height. The filmstrip
+                    // has a fixed height, so this never thrashes on resize.
+                    sourceSize.height: track.height
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
                     cache: false

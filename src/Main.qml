@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtMultimedia
+import "Format.js" as Format
 
 ApplicationWindow {
     id: win
@@ -22,13 +23,7 @@ ApplicationWindow {
     Material.accent: "#FFD60A"
     color: "#0e0e10"
 
-    function pad2(n) { return (n < 10 ? "0" : "") + n; }
-    function fmt(sec) {
-        if (sec < 0 || isNaN(sec)) sec = 0;
-        var m = Math.floor(sec / 60);
-        var s = sec - m * 60;
-        return pad2(m) + ":" + (s < 10 ? "0" : "") + s.toFixed(2);
-    }
+    function fmt(sec) { return Format.fmt(sec); }
     function fileName(url) {
         var s = url.toString();
         return s === "" ? "" : decodeURIComponent(s.substring(s.lastIndexOf('/') + 1));
@@ -361,6 +356,10 @@ ApplicationWindow {
         function onInfoChanged() {
             win.noticeText = "";
             noticeTimer.stop();
+            // Reset priming too, or a video opened mid-prime would stay black:
+            // startPriming() bails while priming is still true.
+            primeFallback.stop();
+            player.priming = false;
             player.primed = false;
             trimBar.startSec = 0;
             trimBar.endSec = backend.duration;

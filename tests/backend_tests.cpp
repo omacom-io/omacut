@@ -117,7 +117,9 @@ private slots:
     void exportDialogDelegatesSuggestedUrlAndRange();
     void suggestedExportUrlAlwaysUsesMp4();
     void exportClipWritesMp4();
+    void exportZeroLengthClipFails();
     void exportStartFailureClearsBusy();
+    void failedExportPreservesExistingFile();
     void qmlShortcutsTriggerBackendActions();
     void trimArgsReencodeForPreciseCuts();
 
@@ -303,6 +305,25 @@ void BackendTests::exportClipWritesMp4() {
              qPrintable(formatName(mp4Path)));
 }
 
+void BackendTests::exportZeroLengthClipFails() {
+    ThumbProvider provider;
+    auto *picker = new FakeFilePicker;
+    Backend backend(&provider, picker);
+    QSignalSpy doneSpy(&backend, &Backend::exportDone);
+    QSignalSpy failedSpy(&backend, &Backend::exportFailed);
+
+    QVERIFY(backend.load(videoUrl()));
+    waitForBackgroundWork(backend);
+
+    const QString outPath = m_dir.filePath(QStringLiteral("empty-range.mp4"));
+    backend.exportClip(QUrl::fromLocalFile(outPath), 0.5, 0.5);
+
+    QCOMPARE(failedSpy.count(), 1);
+    QCOMPARE(doneSpy.count(), 0);
+    QVERIFY(!backend.busy());
+    QVERIFY(!QFileInfo::exists(outPath));
+}
+
 void BackendTests::exportStartFailureClearsBusy() {
     ThumbProvider provider;
     auto *picker = new FakeFilePicker;
@@ -333,6 +354,49 @@ void BackendTests::exportStartFailureClearsBusy() {
     QVERIFY(!backend.busy());
     QVERIFY(backend.status().isEmpty());
     QVERIFY(!failedSpy.first().at(0).toString().isEmpty());
+}
+
+void BackendTests::failedExportPreservesExistingFile() {
+    ThumbProvider provider;
+    auto *picker = new FakeFilePicker;
+    Backend backend(&provider, picker);
+    QSignalSpy failedSpy(&backend, &Backend::exportFailed);
+
+    QVERIFY(backend.load(videoUrl()));
+    waitForBackgroundWork(backend);
+
+    // A pre-existing destination file that a failed export must not clobber.
+    const QString outPath = m_dir.filePath(QStringLiteral("keep-me.mp4"));
+    const QByteArray original("original contents");
+    {
+        QFile existing(outPath);
+        QVERIFY(existing.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        existing.write(original);
+        existing.close();
+    }
+
+    // Force ffmpeg to fail to start, the same way exportStartFailureClearsBusy does.
+    QTemporaryDir pathDir;
+    QVERIFY(pathDir.isValid());
+    const QString fakeFfmpeg = pathDir.filePath(QStringLiteral("ffmpeg"));
+    QFile fake(fakeFfmpeg);
+    QVERIFY(fake.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    fake.write("#!/definitely/missing/omacut-ffmpeg\n");
+    fake.close();
+    QVERIFY(fake.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                | QFileDevice::ExeOwner));
+
+    EnvVarGuard pathGuard("PATH");
+    qputenv("PATH", QFile::encodeName(pathDir.path()) + ':' + qgetenv("PATH"));
+
+    backend.exportClip(QUrl::fromLocalFile(outPath), 0.0, 1.0);
+    QTRY_COMPARE_WITH_TIMEOUT(failedSpy.count(), 1, 5000);
+
+    // The original file survives untouched, and no temp part file is left behind.
+    QFile check(outPath);
+    QVERIFY(check.open(QIODevice::ReadOnly));
+    QCOMPARE(check.readAll(), original);
+    QVERIFY(!QFileInfo::exists(outPath + QStringLiteral(".omacut-part.mp4")));
 }
 
 void BackendTests::qmlShortcutsTriggerBackendActions() {
