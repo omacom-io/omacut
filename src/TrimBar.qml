@@ -64,6 +64,9 @@ Item {
                 Image {
                     width: track.width / Math.max(root.thumbCount, 1)
                     height: track.height
+                    // Bound the decoded texture to the strip height. The filmstrip
+                    // has a fixed height, so this never thrashes on resize.
+                    sourceSize.height: track.height
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
                     cache: false
