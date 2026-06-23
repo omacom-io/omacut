@@ -4,6 +4,8 @@ A dead-simple video **length** trimmer. Open a video, drag the two yellow handle
 
 Built using **Qt Quick (QML)** UI with the Material style — the same Qt stack Quickshell builds on — and **ffmpeg** for the cut. The C++ side compiles to a single executable; the QML is embedded in it via Qt resources.
 
+<img width="3227" height="3227" alt="screenshot-2026-06-23_15-20-40" src="https://github.com/user-attachments/assets/c76047c8-618f-4c1c-91f9-e7024c4f953b" />
+
 ## Hotkeys
 
 - *Escape*: Open a new file to trim.
